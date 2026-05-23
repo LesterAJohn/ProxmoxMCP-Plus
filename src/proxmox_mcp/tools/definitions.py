@@ -61,18 +61,6 @@ vmid* - VM ID number (e.g. '100')
 Example:
 {"vmid": "100", "name": "ubuntu", "cores": 2, "memory": 4096, "scsi0": "local-lvm:vm-100-disk-0,size=20G"}"""
 
-GET_VM_CONFIG_DESC = """Get the full configuration of a QEMU virtual machine.
-
-Returns hardware configuration including CPU, memory, disk, network, BIOS type, boot order, and more.
-This is equivalent to get_container_config but for QEMU VMs.
-
-Parameters:
-node* - Host node name (e.g. 'pve')
-vmid* - VM ID number (e.g. '100')
-
-Example:
-{"vmid": "100", "name": "ubuntu", "cores": 2, "memory": 4096, "scsi0": "local-lvm:vm-100-disk-0,size=20G"}"""
-
 CREATE_VM_DESC = """Create a new virtual machine with specified configuration.
 
 Parameters:
