@@ -1033,6 +1033,17 @@ async def test_get_vm_config_missing_parameters(server):
         await server.mcp.call_tool("get_vm_config", {})
 
 
+@pytest.mark.asyncio
+async def test_get_vm_config_api_error(server, mock_proxmox):
+    """get_vm_config surfaces Proxmox API errors via RuntimeError consistently."""
+    mock_proxmox.return_value.nodes.return_value.qemu.return_value.config.get.side_effect = (
+        Exception("VM does not exist")
+    )
+
+    with pytest.raises(ToolError, match="get_vm_config"):
+        await server.mcp.call_tool("get_vm_config", {"node": "node1", "vmid": "999"})
+
+
 # ---------------------------------------------------------------------------
 # get_container_ip
 # ---------------------------------------------------------------------------

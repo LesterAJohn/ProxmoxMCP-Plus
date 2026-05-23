@@ -15,11 +15,22 @@ This module provides tools for managing and interacting with Proxmox VMs:
 The tools implement fallback mechanisms for scenarios where
 detailed VM information might be temporarily unavailable.
 """
-from typing import List, Optional, Any
+import json
+from typing import Any, Dict, List, Optional
 from mcp.types import TextContent as Content
 from proxmox_mcp.models import ToolResult
 from proxmox_mcp.tools.base import ProxmoxTool
 from proxmox_mcp.tools.console.manager import VMConsoleManager
+
+
+def _as_dict(maybe: Any) -> Dict:
+    """Return dict; unwrap {'data': dict}; else {}."""
+    if isinstance(maybe, dict):
+        data = maybe.get("data")
+        if isinstance(data, dict):
+            return data
+        return maybe
+    return {}
 
 class VMTools(ProxmoxTool):
     """Tools for managing Proxmox VMs.
@@ -52,6 +63,14 @@ class VMTools(ProxmoxTool):
         super().__init__(proxmox_api, metrics=metrics, job_store=job_store)
         self.console_manager = VMConsoleManager(proxmox_api)
         self.command_policy = command_policy
+
+    # ---------- error / output ----------
+    def _json_fmt(self, data: Any) -> List[Content]:
+        """Return raw JSON string (never touch project formatters)."""
+        return [Content(type="text", text=json.dumps(data, indent=2, sort_keys=True))]
+
+    def _err(self, action: str, e: Exception) -> List[Content]:
+        self._handle_error(action, e)
 
     def _get_cluster_vm_inventory(self) -> Optional[list[dict[str, Any]]]:
         try:
@@ -87,32 +106,18 @@ class VMTools(ProxmoxTool):
         return result if result else None
 
     def get_vm_config(self, node: str, vmid: str) -> List[Content]:
-        """Get the full configuration of a QEMU virtual machine.
-        
-        Returns hardware configuration including CPU, memory, disk, network,
-        BIOS type, boot order, and more.
-        
-        Args:
-            node: Host node name (e.g., 'pve')
-            vmid: VM ID number (e.g., '100')
-            
-        Returns:
-            List of Content objects containing VM configuration
+        """Return the full configuration of a QEMU virtual machine.
+
+        Parameters:
+            node: Proxmox node name.
+            vmid: VM ID as a string.
         """
         try:
-            # Get VM config from Proxmox API
-            config = self.proxmox.nodes(node).qemu(vmid).config.get()
-            
-            # Ensure vmid is included in response
-            config = dict(config)
+            config = _as_dict(self.proxmox.nodes(node).qemu(vmid).config.get())
             config.setdefault("vmid", vmid)
-            
-            # Format as JSON (consistent with get_container_config)
-            import json
-            return [Content(type="text", text=json.dumps(config, indent=2, sort_keys=True))]
-            
+            return self._json_fmt(config)
         except Exception as e:
-            self._handle_error(f"get VM config for {vmid}", e)
+            return self._err("get_vm_config", e)
 
     def get_vms(self) -> List[Content]:
         """List all virtual machines across the cluster with detailed status.
