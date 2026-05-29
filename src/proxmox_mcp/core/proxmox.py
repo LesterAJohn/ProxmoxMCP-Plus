@@ -139,3 +139,8 @@ class ProxmoxManager:
             ProxmoxAPI instance ready for making API calls
         """
         return self.api
+
+    def close(self) -> None:
+        """Release resources owned by the Proxmox API manager."""
+        if self.tunnel_manager is not None:
+            self.tunnel_manager.close()

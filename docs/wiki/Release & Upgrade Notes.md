@@ -18,6 +18,29 @@ Use this page to track version-level behavior changes, upgrade steps, and rollba
 
 ## Release History
 
+### Version `0.5.5`
+
+- Release date: 2026-05-29
+- Summary: quality-gate release that closes API SSH tunnels during server shutdown, validates CI on Python 3.11 and 3.12, and raises the enforced coverage gate to 75%.
+- New tools or endpoints:
+  - no new runtime tools or endpoints
+- Changed behavior:
+  - server shutdown now explicitly releases the Proxmox API SSH tunnel manager instead of relying only on process exit cleanup
+  - CI runs the validation stack against Python 3.11 and 3.12
+  - coverage enforcement increased from 70% to 75%
+- Config changes:
+  - no required config migration
+- Docs updated:
+  - `README.md`
+  - `docs/releases/v0.5.5.md`
+  - `docs/wiki/Developer Guide.md`
+  - `docs/wiki/Home.md`
+  - `docs/wiki/Release & Upgrade Notes.md`
+- Upgrade steps:
+  - no required migration
+- Rollback notes:
+  - downgrade to `v0.5.4` only if Python 3.12 CI validation or stricter coverage gates block urgent maintenance work
+
 ### Version `0.5.4`
 
 - Release date: 2026-05-29
@@ -400,7 +423,7 @@ After upgrading:
 
 ## Suggested Release Checklist
 
-- run `pytest -q --cov=proxmox_mcp --cov-report=term-missing --cov-fail-under=70`
+- run `pytest -q --cov=proxmox_mcp --cov-report=term-missing --cov-fail-under=75`
 - run `ruff check .`
 - run `mypy src --ignore-missing-imports`
 - run `pip-audit -r requirements.txt`

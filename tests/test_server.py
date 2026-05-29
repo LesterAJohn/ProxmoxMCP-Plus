@@ -92,6 +92,16 @@ def test_server_initialization(server, mock_proxmox):
     mock_proxmox.assert_called_once()
 
 
+def test_server_close_releases_job_store_and_proxmox_manager(server):
+    server.job_store.close = Mock()
+    server.proxmox_manager.close = Mock()
+
+    server.close()
+
+    server.job_store.close.assert_called_once()
+    server.proxmox_manager.close.assert_called_once()
+
+
 def test_server_applies_configured_http_host_and_port(mock_proxmox, tmp_path):
     """Test FastMCP receives configured host/port for HTTP transports."""
     config_path = tmp_path / "config_http.json"
