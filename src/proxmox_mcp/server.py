@@ -150,6 +150,7 @@ class ProxmoxMCPServer:
 
     def close(self) -> None:
         self.job_store.close()
+        self.proxmox_manager.close()
 
     def start(self) -> None:
         """Start the MCP server with the configured transport."""

@@ -239,7 +239,7 @@ Supported workflow areas:
 
 Validation and contract entry points in this repository:
 
-- `pytest -q --cov=proxmox_mcp --cov-report=term-missing --cov-fail-under=70`
+- `pytest -q --cov=proxmox_mcp --cov-report=term-missing --cov-fail-under=75`
 - `ruff check .`
 - `mypy src --ignore-missing-imports`
 - `pip-audit -r requirements.txt`
@@ -355,7 +355,7 @@ Published wiki:
 ## Development Checks
 
 ```bash
-pytest -q --cov=proxmox_mcp --cov-report=term-missing --cov-fail-under=70
+pytest -q --cov=proxmox_mcp --cov-report=term-missing --cov-fail-under=75
 ruff check .
 mypy src --ignore-missing-imports
 pip-audit -r requirements.txt

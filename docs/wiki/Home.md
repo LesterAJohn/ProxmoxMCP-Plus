@@ -57,7 +57,7 @@ The repository includes live-environment verification entry points for:
 
 Primary validation entry points:
 
-- `pytest -q --cov=proxmox_mcp --cov-report=term-missing --cov-fail-under=70`
+- `pytest -q --cov=proxmox_mcp --cov-report=term-missing --cov-fail-under=75`
 - `ruff check .`
 - `mypy src --ignore-missing-imports`
 - `pip-audit -r requirements.txt`

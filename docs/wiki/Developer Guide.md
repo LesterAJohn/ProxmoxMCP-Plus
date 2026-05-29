@@ -15,7 +15,7 @@ Set `proxmox-config/config.json` to a real environment or use a test config path
 ## Common Commands
 
 ```bash
-pytest -q --cov=proxmox_mcp --cov-report=term-missing --cov-fail-under=70
+pytest -q --cov=proxmox_mcp --cov-report=term-missing --cov-fail-under=75
 ruff check .
 mypy src --ignore-missing-imports
 pip-audit -r requirements.txt
