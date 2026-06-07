@@ -18,6 +18,28 @@ Use this page to track version-level behavior changes, upgrade steps, and rollba
 
 ## Release History
 
+### Version `0.5.8`
+
+- Release date: 2026-06-07
+- Summary: Windows / headless SSH compatibility fixes for `execute_container_command` and `get_node_status` (closes issue #100).
+- New tools or endpoints:
+  - no new runtime tools or endpoints
+- Changed behavior:
+  - `_execute_via_system_ssh()` now passes `-l <user>`, `stdin=DEVNULL`, `-o BatchMode=yes`, and `-o StrictHostKeyChecking=accept-new` so OpenSSH works on Windows and in headless / TTY-less environments
+  - `get_node_status()` now injects `status: "online"` when the API response omits the field, fixing the always-UNKNOWN display
+  - `node_status()` template now reads CPU core count from `cpuinfo.cpus` (with a `maxcpu` fallback), fixing the always-N/A display
+- Removed or deprecated behavior:
+  - no removals or deprecations
+- Config changes:
+  - no required config migration
+- Docs updated:
+  - `docs/releases/v0.5.8.md`
+  - `docs/wiki/Release & Upgrade Notes.md`
+- Upgrade steps:
+  - no required migration
+- Rollback notes:
+  - downgrade to `v0.5.7` only if a Windows deployment needs to keep the previous SSH command shape; doing so restores the broken behaviour fixed in this release
+
 ### Version `0.5.7`
 
 - Release date: 2026-05-30

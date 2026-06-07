@@ -432,6 +432,62 @@ async def test_get_node_status_offline_fallback(server, mock_proxmox):
     assert "Node: maserati" in text
     assert "Status: OFFLINE" in text
 
+
+@pytest.mark.asyncio
+async def test_get_node_status_injects_online_when_api_lacks_status(server, mock_proxmox):
+    """Regression for issue #100 Bug 4A.
+
+    The /nodes/{node}/status endpoint does NOT return a `status` field, so the
+    formatter used to always display "UNKNOWN". When the API response is
+    missing the field we should inject "online" because a successful response
+    is itself proof the node is reachable.
+    """
+    mock_proxmox.return_value.nodes.return_value.status.get.return_value = {
+        "uptime": 123456,
+        "cpuinfo": {"cpus": 8},
+    }
+
+    response = await server.mcp.call_tool("get_node_status", {"node": "node1"})
+    text = response[0].text
+    assert "Status: ONLINE" in text
+    assert "UNKNOWN" not in text
+
+
+@pytest.mark.asyncio
+async def test_get_node_status_reads_cpu_cores_from_cpuinfo(server, mock_proxmox):
+    """Regression for issue #100 Bug 4B.
+
+    The /nodes/{node}/status endpoint reports the CPU count under
+    cpuinfo.cpus, not as a top-level `maxcpu` field. The formatter used to
+    show "N/A" for CPU Cores.
+    """
+    mock_proxmox.return_value.nodes.return_value.status.get.return_value = {
+        "status": "online",
+        "uptime": 0,
+        "cpuinfo": {"cpus": 16},
+    }
+
+    response = await server.mcp.call_tool("get_node_status", {"node": "node1"})
+    text = response[0].text
+    assert "CPU Cores: 16" in text
+    assert "CPU Cores: N/A" not in text
+
+
+@pytest.mark.asyncio
+async def test_get_node_status_falls_back_to_maxcpu(server, mock_proxmox):
+    """If cpuinfo is missing but maxcpu is present, maxcpu is used (forward
+    compatibility in case Proxmox ever returns a top-level maxcpu).
+    """
+    mock_proxmox.return_value.nodes.return_value.status.get.return_value = {
+        "status": "online",
+        "uptime": 0,
+        "maxcpu": 32,
+    }
+
+    response = await server.mcp.call_tool("get_node_status", {"node": "node1"})
+    text = response[0].text
+    assert "CPU Cores: 32" in text
+
 @pytest.mark.asyncio
 async def test_get_vms(server, mock_proxmox):
     """Test get_vms tool."""

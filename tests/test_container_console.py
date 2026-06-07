@@ -223,3 +223,83 @@ def test_system_ssh_uses_double_dash_for_dash_prefixed_target(mock_run, manager,
     dash_index = ssh_command.index("--")
     assert ssh_command[dash_index + 1] == "-oProxyCommand=evil"
     assert "/usr/sbin/pct exec" in ssh_command[dash_index + 2]
+
+
+# ---------------------------------------------------------------------------
+# Windows-compatibility regression tests (issue #100)
+# ---------------------------------------------------------------------------
+
+@patch("proxmox_mcp.tools.console.container_manager.subprocess.run")
+def test_system_ssh_passes_user_with_dash_l(mock_run, manager, ssh_cfg):
+    """Bug 1: system SSH command must include `-l <user>` so OpenSSH does not
+    fall back to the current OS user (e.g. the Windows login name on Windows).
+    """
+    ssh_cfg.prefer_ssh_client = True
+    ssh_cfg.user = "root@pam"
+    ssh_cfg.host_overrides = {"pve1": "ahg1"}
+    mock_run.return_value = MagicMock(returncode=0, stdout="ok\n", stderr="")
+
+    manager.execute_command("pve1", "101", "echo ok")
+
+    ssh_command = mock_run.call_args[0][0]
+    assert "-l" in ssh_command
+    l_index = ssh_command.index("-l")
+    assert ssh_command[l_index + 1] == "root@pam"
+    # `-l` must come before the `--` separator so OpenSSH parses it.
+    assert l_index < ssh_command.index("--")
+
+
+@patch("proxmox_mcp.tools.console.container_manager.subprocess.run")
+def test_system_ssh_omits_dash_l_when_user_unset(mock_run, manager, ssh_cfg):
+    """`-l` is only added when a user is configured; never emit `-l None`."""
+    ssh_cfg.prefer_ssh_client = True
+    ssh_cfg.user = None
+    ssh_cfg.host_overrides = {"pve1": "ahg1"}
+    mock_run.return_value = MagicMock(returncode=0, stdout="ok\n", stderr="")
+
+    manager.execute_command("pve1", "101", "echo ok")
+
+    ssh_command = mock_run.call_args[0][0]
+    assert "-l" not in ssh_command
+
+
+@patch("proxmox_mcp.tools.console.container_manager.subprocess.run")
+def test_system_ssh_closes_stdin(mock_run, manager, ssh_cfg):
+    """Bug 2: subprocess.run must use stdin=DEVNULL so OpenSSH does not
+    inherit the MCP server's stdin pipe (causes 70s hang on Windows).
+    """
+    import subprocess as sp
+
+    ssh_cfg.prefer_ssh_client = True
+    ssh_cfg.host_overrides = {"pve1": "ahg1"}
+    mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+    manager.execute_command("pve1", "101", "echo ok")
+
+    assert mock_run.call_args.kwargs.get("stdin") == sp.DEVNULL
+
+
+@patch("proxmox_mcp.tools.console.container_manager.subprocess.run")
+def test_system_ssh_uses_batch_mode_and_accept_new(mock_run, manager, ssh_cfg):
+    """Bug 3: system SSH must pass BatchMode=yes and
+    StrictHostKeyChecking=accept-new so headless MCP servers do not hang
+    on host-key prompts.
+    """
+    ssh_cfg.prefer_ssh_client = True
+    ssh_cfg.host_overrides = {"pve1": "ahg1"}
+    mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+    manager.execute_command("pve1", "101", "echo ok")
+
+    ssh_command = mock_run.call_args[0][0]
+    # `-o BatchMode=yes` and `-o StrictHostKeyChecking=accept-new` must both
+    # be present, and they must come before the `--` separator.
+    assert "-o" in ssh_command
+    assert "BatchMode=yes" in ssh_command
+    assert "StrictHostKeyChecking=accept-new" in ssh_command
+
+    dash_index = ssh_command.index("--")
+    for opt in ("BatchMode=yes", "StrictHostKeyChecking=accept-new"):
+        assert ssh_command.index(opt) < dash_index, (
+            f"{opt} must be passed as an SSH option, not as part of the target"
+        )
