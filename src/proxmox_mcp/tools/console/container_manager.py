@@ -42,6 +42,21 @@ class ContainerConsoleManager:
             ssh_cmd.extend(["-i", os.path.expanduser(key_file)])
         if getattr(self.ssh_cfg, "port", None):
             ssh_cmd.extend(["-p", str(self.ssh_cfg.port)])
+        if getattr(self.ssh_cfg, "user", None):
+            # Explicitly pass the SSH username. On Linux, OpenSSH often falls
+            # back to the current system user, but on Windows it falls back to
+            # the Windows login name, which rarely has access to the Proxmox
+            # host. Passing -l keeps behaviour consistent across platforms.
+            ssh_cmd.extend(["-l", self.ssh_cfg.user])
+        # `-o BatchMode=yes` makes OpenSSH fail immediately instead of waiting
+        # for interactive input (host key confirmation, password prompts,
+        # etc.) which is essential when the MCP server runs headless.
+        # `-o StrictHostKeyChecking=accept-new` silently trusts first-seen
+        # host keys so first-time connections do not block execution.
+        ssh_cmd.extend([
+            "-o", "BatchMode=yes",
+            "-o", "StrictHostKeyChecking=accept-new",
+        ])
         # `--` ends OpenSSH option processing so a target accidentally starting
         # with "-" (e.g. a misconfigured host_overrides value) cannot be
         # reinterpreted as a flag like -oProxyCommand=...
@@ -52,8 +67,13 @@ class ContainerConsoleManager:
             _log_safe(target),
             len(ssh_cmd),
         )
+        # `stdin=subprocess.DEVNULL` is required on Windows. Without it,
+        # OpenSSH inherits the MCP server's stdin pipe, blocks indefinitely
+        # reading from it, and the call hangs until the 70s timeout. This
+        # does not reproduce on Linux where stdin behaves differently.
         completed = subprocess.run(  # noqa: S603
             ssh_cmd,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=70,

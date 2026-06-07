@@ -74,7 +74,11 @@ class ProxmoxTemplates:
             f"{ProxmoxTheme.RESOURCES['node']} Node: {node}",
             f"  - Status: {status.get('status', 'unknown').upper()}",
             f"  - Uptime: {ProxmoxFormatters.format_uptime(status.get('uptime', 0))}",
-            f"  - CPU Cores: {status.get('maxcpu', 'N/A')}",
+            # The /nodes/{node}/status endpoint reports the CPU count nested
+            # under cpuinfo.cpus. The top-level maxcpu field is the node-list
+            # field and is not present here, so we fall back to it for
+            # forward compatibility.
+            f"  - CPU Cores: {status.get('cpuinfo', {}).get('cpus', status.get('maxcpu', 'N/A'))}",
             f"  - Memory: {ProxmoxFormatters.format_bytes(memory_used)} / "
             f"{ProxmoxFormatters.format_bytes(memory_total)} ({memory_percent:.1f}%)"
         ]

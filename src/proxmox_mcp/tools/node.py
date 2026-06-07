@@ -144,6 +144,13 @@ class NodeTools(ProxmoxTool):
         """
         try:
             result = self.proxmox.nodes(node).status.get()
+            # The Proxmox /nodes/{node}/status endpoint does NOT include a
+            # `status` field in its response (that field only exists in the
+            # /nodes list endpoint). A successful response here is itself
+            # proof the node is reachable, so we inject "online" to keep the
+            # formatter from always rendering "UNKNOWN".
+            if "status" not in result:
+                result["status"] = "online"
             return self._format_response((node, result), "node_status")
         except Exception as e:
             try:
