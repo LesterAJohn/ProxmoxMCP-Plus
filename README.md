@@ -79,6 +79,13 @@ Then edit `proxmox-config/config.json` with your environment. At minimum, it nee
 Add an `ssh` section as well if you want container command execution.
 Add a `jobs` section if you want job state persisted somewhere other than the default local SQLite file.
 
+This fork also supports runtime Proxmox environment selection. Use
+`proxmox-config/config.multi-environment.example.json` when one MCP/OpenAPI
+service should reach more than one Proxmox cluster or tenant. Every tool
+accepts an optional `environment` parameter; when it is omitted, the service
+uses `default_environment`. Existing single-environment configs continue to
+work and are treated as the `default` runtime environment.
+
 For real live verification, use a separate `proxmox-config/config.live.json` created from `proxmox-config/config.live.example.json`.
 Do not point live e2e at a placeholder or local-only `config.json` unless you intentionally run a local API tunnel there.
 
@@ -91,6 +98,67 @@ Optional job persistence config:
   }
 }
 ```
+
+Runtime multi-environment config:
+
+```json
+{
+  "default_environment": "production",
+  "runtime_config_reload": true,
+  "jobs": {
+    "sqlite_path": "proxmox-jobs.sqlite3"
+  },
+  "environments": {
+    "production": {
+      "proxmox": {
+        "host": "pve-prod.example.internal",
+        "port": 8006,
+        "verify_ssl": true,
+        "service": "PVE"
+      },
+      "auth": {
+        "user": "automation@pve",
+        "token_name": "mcp-token",
+        "token_value": "prod-token"
+      }
+    },
+    "lab": {
+      "proxmox": {
+        "host": "pve-lab.example.internal",
+        "port": 8006,
+        "verify_ssl": true,
+        "service": "PVE"
+      },
+      "auth": {
+        "user": "automation@pve",
+        "token_name": "mcp-token",
+        "token_value": "lab-token"
+      },
+      "jobs": {
+        "sqlite_path": "proxmox-jobs-lab.sqlite3"
+      }
+    }
+  }
+}
+```
+
+Example tool call routed to the lab environment:
+
+```json
+{
+  "node": "pve-lab-1",
+  "vmid": "101",
+  "environment": "lab"
+}
+```
+
+Job state is separated per environment. If an environment defines its own
+`jobs.sqlite_path`, that path is used as-is. Otherwise, multi-environment
+deployments suffix the root job database path with the environment name.
+
+FortisAI integration note: this fork contains the runtime environment
+selection implementation and documentation, but it is not yet wired into the
+FortisAI platform deployment.
 
 ### 2. Choose One Runtime Path
 

@@ -177,7 +177,7 @@ After connecting any client:
 2. Confirm read-only tools appear: `get_nodes`, `get_vms`, `get_containers`, `get_storage`.
 3. In OpenAPI mode, confirm `/livez` returns `200`.
 4. In OpenAPI mode, confirm authenticated `/health` or `/readyz` is healthy.
-5. Confirm `execute_container_command` appears only if the config includes an `ssh` section.
+5. Confirm `execute_container_command` appears and, if you use it, that the selected runtime environment includes an `ssh` section.
 6. Run mutating tools only after checking target IDs, storage, permissions, and command policy.
 
 ## Common Client Mistakes
@@ -188,7 +188,7 @@ After connecting any client:
 - The Proxmox API token lacks permissions for the requested operation.
 - TLS verification is disabled but `PROXMOX_DEV_MODE` or `security.dev_mode` is not enabled.
 - A client points to `http://<host>:8811` expecting MCP Streamable HTTP; use `http://<host>:8000/mcp` instead.
-- `execute_container_command` is expected even though the `ssh` config is absent.
+- `execute_container_command` is called against an environment that has no `ssh` config.
 
 ## Related Pages
 

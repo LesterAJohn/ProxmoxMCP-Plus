@@ -13,7 +13,8 @@ Use that guide when you need to enable:
 
 Quick summary:
 
-- These tools are registered only when the MCP config includes an `ssh` section.
+- These tools resolve SSH settings from the selected runtime environment.
+- Add `ssh` at the root for single-environment configs, or under each entry in `environments` that should allow LXC command execution.
 - The recommended setup is a dedicated `mcp-agent` SSH user on every Proxmox node.
 - Grant that user passwordless sudo only for `/usr/sbin/pct exec *`.
 - Add the Proxmox node host keys to `known_hosts`, or use `prefer_ssh_client=true` if you need OpenSSH config behavior.

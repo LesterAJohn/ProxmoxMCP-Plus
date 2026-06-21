@@ -89,17 +89,20 @@ def test_server_initialization(server, mock_proxmox):
     assert server.config.auth.token_value == "test_value"
     assert server.config.logging.level == "DEBUG"
 
+    mock_proxmox.assert_not_called()
+    server.runtime_manager.get_runtime()
     mock_proxmox.assert_called_once()
 
 
 def test_server_close_releases_job_store_and_proxmox_manager(server):
-    server.job_store.close = Mock()
-    server.proxmox_manager.close = Mock()
+    runtime = server.runtime_manager.get_runtime()
+    runtime.job_store.close = Mock()
+    runtime.proxmox_manager.close = Mock()
 
     server.close()
 
-    server.job_store.close.assert_called_once()
-    server.proxmox_manager.close.assert_called_once()
+    runtime.job_store.close.assert_called_once()
+    runtime.proxmox_manager.close.assert_called_once()
 
 
 def test_server_applies_configured_http_host_and_port(mock_proxmox, tmp_path):
@@ -156,6 +159,63 @@ def test_mcp_env_overrides_transport_security(tmp_path, monkeypatch):
     assert config.mcp.dns_rebinding_protection is True
     assert config.mcp.allowed_hosts == ["mcp.example.com:*", "localhost:*"]
     assert config.mcp.allowed_origins == ["https://mcp.example.com", "http://localhost:*"]
+
+
+def test_loader_accepts_runtime_environments(tmp_path):
+    config_path = tmp_path / "config_environments.json"
+    config_path.write_text(json.dumps({
+        "default_environment": "prod",
+        "jobs": {"sqlite_path": str(tmp_path / "jobs.sqlite3")},
+        "logging": {"level": "INFO"},
+        "environments": {
+            "prod": {
+                "proxmox": {"host": "prod.proxmox.test", "port": 8006, "verify_ssl": True, "service": "PVE"},
+                "auth": {"user": "prod@pve", "token_name": "prod_token", "token_value": "prod_secret"},
+            },
+            "lab": {
+                "proxmox": {"host": "lab.proxmox.test", "port": 8006, "verify_ssl": True, "service": "PVE"},
+                "auth": {"user": "lab@pve", "token_name": "lab_token", "token_value": "lab_secret"},
+                "ssh": {"user": "root", "host_overrides": {"pve-lab": "10.0.0.5"}},
+            },
+        },
+    }))
+
+    config = load_config(str(config_path))
+
+    assert config.default_environment == "prod"
+    assert config.proxmox.host == "prod.proxmox.test"
+    assert set(config.environments) == {"prod", "lab"}
+    assert config.environments["lab"].ssh is not None
+
+
+def test_runtime_manager_selects_environment_per_request(mock_proxmox, tmp_path):
+    config_path = tmp_path / "config_environments.json"
+    config_path.write_text(json.dumps({
+        "default_environment": "prod",
+        "jobs": {"sqlite_path": str(tmp_path / "jobs.sqlite3")},
+        "logging": {"level": "INFO"},
+        "environments": {
+            "prod": {
+                "proxmox": {"host": "prod.proxmox.test", "port": 8006, "verify_ssl": True, "service": "PVE"},
+                "auth": {"user": "prod@pve", "token_name": "prod_token", "token_value": "prod_secret"},
+            },
+            "lab": {
+                "proxmox": {"host": "lab.proxmox.test", "port": 8007, "verify_ssl": True, "service": "PVE"},
+                "auth": {"user": "lab@pve", "token_name": "lab_token", "token_value": "lab_secret"},
+                "jobs": {"sqlite_path": str(tmp_path / "lab-jobs.sqlite3")},
+            },
+        },
+    }))
+
+    runtime_server = ProxmoxMCPServer(str(config_path))
+    lab_runtime = runtime_server.runtime_manager.get_runtime("lab")
+    prod_runtime = runtime_server.runtime_manager.get_runtime(None)
+
+    assert mock_proxmox.call_args_list[0].kwargs["host"] == "lab.proxmox.test"
+    assert mock_proxmox.call_args_list[0].kwargs["port"] == 8007
+    assert mock_proxmox.call_args_list[1].kwargs["host"] == "prod.proxmox.test"
+    assert lab_runtime.job_store.sqlite_path.endswith("lab-jobs.sqlite3")
+    assert prod_runtime.job_store.sqlite_path.endswith("jobs-prod.sqlite3")
 
 
 def test_env_boolean_overrides_accept_common_values(monkeypatch, tmp_path):
@@ -277,7 +337,8 @@ def test_server_uses_local_api_tunnel_endpoint(mock_proxmox, tmp_path):
     }))
 
     with patch("proxmox_mcp.core.ssh_tunnel.SSHTunnelManager.ensure_tunnel"):
-        ProxmoxMCPServer(str(config_path))
+        tunnel_server = ProxmoxMCPServer(str(config_path))
+        tunnel_server.runtime_manager.get_runtime()
 
     assert mock_proxmox.call_args.kwargs["host"] == "127.0.0.1"
     assert mock_proxmox.call_args.kwargs["port"] == 18006
@@ -328,7 +389,7 @@ def test_loader_env_preserves_policy_default_lists(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_list_tools(server):
-    """Test listing available tools. Config has no ssh section, so execute_container_command must be absent."""
+    """Test listing available tools. Runtime environment selection is exposed on all tools."""
     tools = await server.mcp.list_tools()
 
     assert len(tools) > 0
@@ -339,13 +400,15 @@ async def test_list_tools(server):
     assert "execute_vm_command" in tool_names
     assert "clone_vm" in tool_names
     assert "update_container_resources" in tool_names
-    assert "execute_container_command" not in tool_names
-    assert "update_container_ssh_keys" not in tool_names
+    assert "execute_container_command" in tool_names
+    assert "update_container_ssh_keys" in tool_names
     # LXC config tools (no SSH required)
     assert "get_container_config" in tool_names
     assert "get_container_ip" in tool_names
     # VM config tool
     assert "get_vm_config" in tool_names
+    for tool in tools:
+        assert "environment" in tool.inputSchema.get("properties", {})
 
 
 @pytest.mark.asyncio
@@ -357,14 +420,14 @@ async def test_get_containers_schema_avoids_refs(server):
 
     assert "$defs" not in schema
     assert not _schema_contains_key(schema, "$ref")
-    assert {"node", "include_stats", "include_raw", "format_style"}.issubset(schema["properties"])
+    assert {"node", "include_stats", "include_raw", "format_style", "environment"}.issubset(schema["properties"])
     assert "payload" in schema["properties"]
     assert "payload" not in schema.get("required", [])
 
 
 @pytest.mark.asyncio
 async def test_list_tools_with_ssh_config(mock_proxmox, tmp_path):
-    """execute_container_command is registered only when an ssh section is present."""
+    """execute_container_command remains registered when an ssh section is present."""
     config_path = tmp_path / "config_ssh.json"
     config_path.write_text(json.dumps({
         "proxmox": {"host": "test.proxmox.com", "port": 8006, "verify_ssl": True, "service": "PVE"},

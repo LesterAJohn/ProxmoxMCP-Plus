@@ -34,12 +34,15 @@ targeted automatically.
 
 ## Security Model
 
-### The feature is opt-in
+### The feature is opt-in per environment
 
-`execute_container_command` and `update_container_ssh_keys` are only registered when an `ssh`
-section is present in the config.
+`execute_container_command` and `update_container_ssh_keys` resolve SSH settings from the
+selected runtime environment. In single-environment configs, add an `ssh` section at the root.
+In multi-environment configs, add `ssh` under each environment that should allow LXC command
+execution.
 
-No `ssh` section -> no tool registration -> no SSH connection -> no container command execution.
+No `ssh` section for the selected environment -> the tool returns an SSH configuration error
+and no container command is executed.
 
 ### Recommended setup: dedicated `mcp-agent` user with scoped sudo
 
@@ -289,20 +292,17 @@ When `update_container_ssh_keys` is called:
 
 ## Troubleshooting
 
-### The tool does not appear
+### The selected environment has no SSH config
 
 Most likely causes:
 
-- The running config has no `ssh` section.
+- The running single-environment config has no root `ssh` section.
+- The selected multi-environment entry has no `ssh` section.
 - The MCP server was not restarted after editing `config.json`.
-- The client cached an older tool list.
+- The request is using a different `environment` than intended.
 
-Check the server log for either:
-
-```text
-Container command execution enabled (SSH configured for user 'mcp-agent')
-Container command execution disabled (no [ssh] section in config)
-```
+Check the server log for the selected environment name and verify the matching
+config entry includes SSH user, key, host override, and sudo settings.
 
 ### SSH works manually, but the tool fails with host key errors
 

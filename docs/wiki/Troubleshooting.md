@@ -100,14 +100,16 @@ Common causes:
 - the job record was created without a cancellable Proxmox task
 - the backend task ID was never available
 
-## `execute_container_command` Is Missing
+## `execute_container_command` Reports Missing SSH Config
 
-This is expected when the config has no `ssh` section.
+This is expected when the selected runtime environment has no `ssh` section.
 
-If you expected the tool to exist:
+If you expected the command to run:
 
-- add the `ssh` section to the config
+- add the `ssh` section to the root config for single-environment deployments
+- add the `ssh` section to the selected entry under `environments` for multi-environment deployments
 - restart the server
+- verify that the tool call is using the intended `environment`
 - verify the SSH user, key, host mapping, and `use_sudo` settings
 
 ## VM Command Execution Fails

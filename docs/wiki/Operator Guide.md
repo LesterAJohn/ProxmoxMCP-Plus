@@ -45,6 +45,86 @@ The main sections are:
 - `command_policy`: rules for `execute_*` tools and high-risk mutating operations
 - `ssh`: optional SSH settings for LXC command execution
 
+## Runtime Environment Selection
+
+This fork can resolve Proxmox configuration per tool request. Use
+`proxmox-config/config.multi-environment.example.json` when one server should
+operate across multiple Proxmox environments.
+
+Top-level controls:
+
+- `default_environment`: environment used when a tool call omits `environment`
+- `runtime_config_reload`: when true, the config file is reloaded before
+  resolving each environment
+- `environments`: map of environment name to Proxmox API, auth, optional API
+  tunnel, optional SSH settings, and optional job-store path
+
+Every MCP tool schema includes an optional `environment` parameter. OpenAPI
+calls generated from the MCP schema also accept `environment` in the request
+body. Existing single-environment configs remain valid; the loader normalizes
+the root `proxmox`, `auth`, `api_tunnel`, `ssh`, and `jobs` sections into the
+default runtime environment.
+
+Example:
+
+```json
+{
+  "default_environment": "production",
+  "runtime_config_reload": true,
+  "jobs": {
+    "sqlite_path": "proxmox-jobs.sqlite3"
+  },
+  "environments": {
+    "production": {
+      "proxmox": {
+        "host": "pve-prod.example.internal",
+        "port": 8006,
+        "verify_ssl": true,
+        "service": "PVE"
+      },
+      "auth": {
+        "user": "automation@pve",
+        "token_name": "mcp-token",
+        "token_value": "prod-token"
+      }
+    },
+    "lab": {
+      "proxmox": {
+        "host": "pve-lab.example.internal",
+        "port": 8006,
+        "verify_ssl": true,
+        "service": "PVE"
+      },
+      "auth": {
+        "user": "automation@pve",
+        "token_name": "mcp-token",
+        "token_value": "lab-token"
+      },
+      "ssh": {
+        "user": "mcp-agent",
+        "key_file": "~/.ssh/proxmox_lab_key"
+      },
+      "jobs": {
+        "sqlite_path": "proxmox-jobs-lab.sqlite3"
+      }
+    }
+  }
+}
+```
+
+Operational notes:
+
+- Use environment names that are safe for agents to repeat, such as `production`, `lab`, or `tenant-a`.
+- Job state is separated per environment. An environment-specific
+  `jobs.sqlite_path` is used directly; otherwise the root job database path is
+  suffixed with the environment name.
+- SSH-backed container commands resolve SSH settings from the selected
+  environment, so each Proxmox environment can use its own node aliases and
+  key material.
+- The runtime manager caches clients per environment and refreshes them when
+  the selected environment config changes.
+- This fork is not yet wired into the FortisAI platform deployment.
+
 ## Environment Variable Fallback
 
 If `PROXMOX_MCP_CONFIG` is not set or the file is missing, the loader falls back to environment variables.
@@ -195,7 +275,9 @@ There are two command execution paths:
 - `execute_vm_command`: uses QEMU Guest Agent inside VMs
 - `execute_container_command`: uses SSH to the Proxmox node and then `pct exec` inside containers
 
-Container command execution is optional and only appears when an `ssh` section exists in the config.
+Container command execution is optional per runtime environment. The tools are
+registered in the schema, and the selected environment must include an `ssh`
+section for LXC command execution to proceed.
 
 For setup details, see [Container Command Execution](Container-Command-Execution).
 
@@ -225,7 +307,7 @@ After deployment, test in this order:
 2. Call read-only tools first: `get_nodes`, `get_vms`, `get_storage`, `get_cluster_status`
 3. In OpenAPI mode, confirm `/livez` responds and authenticated `/health` and `/docs` requests work
 4. Confirm `/jobs` responds if you expect persistent job tracking
-5. If you enabled SSH-backed container commands, confirm `execute_container_command` appears in the tool list
+5. If you enabled SSH-backed container commands, confirm the selected environment includes `ssh` settings and that `execute_container_command` can reach a safe test container
 6. Only then test mutating tools such as create, start, delete, snapshot, or backup
 
 ## Logs and Health

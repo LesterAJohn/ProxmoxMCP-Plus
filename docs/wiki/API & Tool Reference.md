@@ -8,7 +8,8 @@ Use this page when you need exact tool names, input shapes, prerequisites, or co
 
 - `Read-only` tools inspect Proxmox state and should be your first call when validating reachability or inventory.
 - `Mutating` tools create, start, stop, change, restore, or delete infrastructure.
-- Tool availability depends on runtime configuration. In particular, some command-execution tools are only registered when `ssh` config is present.
+- Every tool accepts optional `environment` input when runtime environments are configured. If omitted, the server uses `default_environment`.
+- SSH-backed command-execution tools are registered in the schema, but the selected environment must include `ssh` settings before those commands can run.
 - MCP Streamable HTTP mode exposes the native MCP endpoint at `/mcp`.
 - OpenAPI mode is a bridge over the same MCP tool surface. The generated schema at `/openapi.json` is the source of truth for the exact request and response shape exposed by the running server.
 
@@ -30,7 +31,7 @@ When the OpenAPI wrapper is enabled, the primary endpoints are:
 | --- | --- | --- |
 | `/` | service metadata | basic wrapper metadata |
 | `/docs` | Swagger UI | interactive API docs for the currently running tool set |
-| `/openapi.json` | generated OpenAPI schema | reflects conditional tool registration such as SSH-backed tools |
+| `/openapi.json` | generated OpenAPI schema | reflects the running MCP tool surface, including optional `environment` inputs |
 | `/livez` | liveness check | unauthenticated, minimal process liveness |
 | `/readyz` | readiness check | requires OpenAPI auth and reports MCP backend connectivity |
 | `/health` | readiness alias | requires OpenAPI auth and matches `/readyz` |
@@ -43,7 +44,7 @@ When the OpenAPI wrapper is enabled, the primary endpoints are:
 
 - Proxmox API access requires a valid `proxmox` and `auth` configuration.
 - OpenAPI access requires `Authorization: Bearer <PROXMOX_API_KEY>` by default. Startup without an API key requires the explicit local-development override `PROXMOX_ALLOW_NO_AUTH=true`.
-- SSH-backed container command workflows require a valid `ssh` configuration.
+- SSH-backed container command workflows require a valid `ssh` configuration in the selected runtime environment.
 - Command-execution tools are subject to command-policy checks. Depending on policy, a request can be allowed, denied, or require an `approval_token`.
 - Detailed policy behavior lives in the [Security Guide](Security-Guide).
 
@@ -128,8 +129,8 @@ Selector-based tools fail when no container matches the selector or when a bulk 
 | `update_container_resources` | Mutating | `selector` | `cores`, `memory`, `swap`, `disk_gb`, `disk=rootfs`, `format_style=pretty\|json` | selector resolves to one or more containers | no selector match, invalid resize target, resource update rejected |
 | `create_container` | Mutating | `node`, `vmid`, `ostemplate` | `hostname`, `cores=1`, `memory=512`, `swap=512`, `disk_size=8`, `storage`, `password`, `ssh_public_keys`, `network_bridge=vmbr0`, `start_after_create=false`, `onboot=false`, `nesting=false`, `unprivileged=true` | target node exists, template path valid, target storage valid | duplicate `vmid`, missing template, invalid storage or bridge |
 | `delete_container` | Mutating | `selector` | `force=false`, `format_style=pretty\|json` | selector resolves to one or more containers | no selector match, running container without `force`, delete failure |
-| `execute_container_command` | Mutating | `selector`, `command` | `approval_token` | only registered when `ssh` config exists; container must be running; policy must allow command | tool unavailable without SSH config, no selector match, SSH failure, policy denial |
-| `update_container_ssh_keys` | Mutating/high-risk | `node`, `vmid`, `public_keys` | `mode=append\|replace`, `approval_token` | only registered when `ssh` config exists; target container reachable through configured execution path; high-risk policy must allow the operation | tool unavailable without SSH config, invalid container target, SSH failure, approval required |
+| `execute_container_command` | Mutating | `selector`, `command` | `approval_token`, `environment` | selected environment has `ssh` config; container must be running; policy must allow command | selected environment has no SSH config, no selector match, SSH failure, policy denial |
+| `update_container_ssh_keys` | Mutating/high-risk | `node`, `vmid`, `public_keys` | `mode=append\|replace`, `approval_token`, `environment` | selected environment has `ssh` config; target container reachable through configured execution path; high-risk policy must allow the operation | selected environment has no SSH config, invalid container target, SSH failure, approval required |
 | `get_container_config` | Read-only | `node`, `vmid` | none | target container exists | container not found, node mismatch |
 | `get_container_ip` | Read-only | `node`, `vmid` | none | target container exists | container not found, IP information unavailable |
 

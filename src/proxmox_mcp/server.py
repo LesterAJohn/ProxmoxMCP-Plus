@@ -15,10 +15,14 @@ from typing import Any, Literal, Optional, cast
 from mcp.server.fastmcp import FastMCP
 from proxmox_mcp.config.loader import load_config
 from proxmox_mcp.core.logging import setup_logging
-from proxmox_mcp.core.proxmox import ProxmoxManager
 from proxmox_mcp.observability import ToolMetrics
-from proxmox_mcp.security import CommandPolicyGate
-from proxmox_mcp.services import JobStore, ToolRegistry
+from proxmox_mcp.runtime import (
+    RuntimeCommandPolicyProxy,
+    RuntimeEnvironmentManager,
+    RuntimeJobStoreProxy,
+    RuntimeToolProxy,
+)
+from proxmox_mcp.services import ToolRegistry
 from proxmox_mcp.services.builtin_tool_plugins import (
     BackupToolsPlugin,
     ContainerToolsPlugin,
@@ -28,15 +32,6 @@ from proxmox_mcp.services.builtin_tool_plugins import (
     SnapshotToolsPlugin,
     VMToolsPlugin,
 )
-from proxmox_mcp.tools.backup import BackupTools
-from proxmox_mcp.tools.cluster import ClusterTools
-from proxmox_mcp.tools.containers import ContainerTools
-from proxmox_mcp.tools.iso import ISOTools
-from proxmox_mcp.tools.jobs import JobsTools
-from proxmox_mcp.tools.node import NodeTools
-from proxmox_mcp.tools.snapshots import SnapshotTools
-from proxmox_mcp.tools.storage import StorageTools
-from proxmox_mcp.tools.vm import VMTools
 
 TransportSecuritySettings: Any
 try:
@@ -56,38 +51,26 @@ class ProxmoxMCPServer:
     def __init__(self, config_path: Optional[str] = None):
         self.config = load_config(config_path)
         self.logger = setup_logging(self.config.logging)
-
-        self.proxmox_manager = ProxmoxManager(
-            self.config.proxmox,
-            self.config.auth,
-            api_tunnel_config=self.config.api_tunnel,
-            ssh_config=self.config.ssh,
-        )
-        self.proxmox = self.proxmox_manager.get_api()
-        self.command_policy = CommandPolicyGate(self.config.command_policy)
         self.metrics = ToolMetrics()
-        self.job_store = JobStore(self.proxmox, sqlite_path=self.config.jobs.sqlite_path)
-
-        self.node_tools = NodeTools(self.proxmox, metrics=self.metrics, job_store=self.job_store)
-        self.vm_tools = VMTools(
-            self.proxmox,
-            command_policy=self.command_policy,
+        self.runtime_manager = RuntimeEnvironmentManager(
+            config_path=config_path,
+            initial_config=self.config,
             metrics=self.metrics,
-            job_store=self.job_store,
+            logger=self.logger,
         )
-        self.storage_tools = StorageTools(self.proxmox, metrics=self.metrics, job_store=self.job_store)
-        self.cluster_tools = ClusterTools(self.proxmox, metrics=self.metrics, job_store=self.job_store)
-        self.container_tools = ContainerTools(
-            self.proxmox,
-            self.config.ssh,
-            command_policy=self.command_policy,
-            metrics=self.metrics,
-            job_store=self.job_store,
-        )
-        self.snapshot_tools = SnapshotTools(self.proxmox, metrics=self.metrics, job_store=self.job_store)
-        self.iso_tools = ISOTools(self.proxmox, metrics=self.metrics, job_store=self.job_store)
-        self.backup_tools = BackupTools(self.proxmox, metrics=self.metrics, job_store=self.job_store)
-        self.jobs_tools = JobsTools(self.job_store)
+        self.proxmox_manager = RuntimeToolProxy(self.runtime_manager, "proxmox_manager")
+        self.proxmox = RuntimeToolProxy(self.runtime_manager, "proxmox")
+        self.command_policy = RuntimeCommandPolicyProxy(self.runtime_manager)
+        self.job_store = RuntimeJobStoreProxy(self.runtime_manager)
+        self.node_tools = RuntimeToolProxy(self.runtime_manager, "node_tools")
+        self.vm_tools = RuntimeToolProxy(self.runtime_manager, "vm_tools")
+        self.storage_tools = RuntimeToolProxy(self.runtime_manager, "storage_tools")
+        self.cluster_tools = RuntimeToolProxy(self.runtime_manager, "cluster_tools")
+        self.container_tools = RuntimeToolProxy(self.runtime_manager, "container_tools")
+        self.snapshot_tools = RuntimeToolProxy(self.runtime_manager, "snapshot_tools")
+        self.iso_tools = RuntimeToolProxy(self.runtime_manager, "iso_tools")
+        self.backup_tools = RuntimeToolProxy(self.runtime_manager, "backup_tools")
+        self.jobs_tools = RuntimeToolProxy(self.runtime_manager, "jobs_tools")
 
         log_level = cast(
             Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
@@ -149,8 +132,7 @@ class ProxmoxMCPServer:
         self.tool_registry.register_all(self)
 
     def close(self) -> None:
-        self.job_store.close()
-        self.proxmox_manager.close()
+        self.runtime_manager.close()
 
     def start(self) -> None:
         """Start the MCP server with the configured transport."""

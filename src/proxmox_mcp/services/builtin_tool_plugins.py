@@ -54,6 +54,12 @@ from proxmox_mcp.tools.definitions import (
 from proxmox_mcp.services.tool_registry import ToolRegistryPlugin
 
 
+EnvironmentName = Annotated[
+    Optional[str],
+    Field(description="Runtime Proxmox environment name. Uses default_environment when omitted.", default=None),
+]
+
+
 def _log_safe(value: object, max_length: int = 200) -> str:
     text = str(value).replace("\r", "").replace("\n", "")
     return text[:max_length]
@@ -64,6 +70,7 @@ class GetContainersPayload(BaseModel):
     include_stats: bool = Field(False, description="Fetch per-container live stats and fallbacks")
     include_raw: bool = Field(False, description="Include raw status/config")
     format_style: Literal["pretty", "json"] = Field("pretty", description="'pretty' or 'json'")
+    environment: Optional[str] = Field(None, description="Runtime Proxmox environment name")
 
 
 class RegistryPluginBase(ToolRegistryPlugin):
@@ -120,22 +127,24 @@ class RegistryPluginBase(ToolRegistryPlugin):
         high_risk: bool = False,
     ) -> Callable[..., Any]:
         def wrapped(*args: Any, **kwargs: Any) -> Any:
+            environment = kwargs.pop("environment", None)
             start = time.perf_counter()
             success = False
             approval_token = kwargs.get("approval_token")
-            try:
-                self._enforce_operation_policy(
-                    server,
-                    tool_name,
-                    approval_token if isinstance(approval_token, str) else None,
-                    high_risk=high_risk,
-                )
-                result = handler(*args, **kwargs)
-                success = True
-                return result
-            finally:
-                latency_ms = (time.perf_counter() - start) * 1000.0
-                server.metrics.observe(tool_name, latency_ms=latency_ms, success=success)
+            with server.runtime_manager.use(environment if isinstance(environment, str) else None):
+                try:
+                    self._enforce_operation_policy(
+                        server,
+                        tool_name,
+                        approval_token if isinstance(approval_token, str) else None,
+                        high_risk=high_risk,
+                    )
+                    result = handler(*args, **kwargs)
+                    success = True
+                    return result
+                finally:
+                    latency_ms = (time.perf_counter() - start) * 1000.0
+                    server.metrics.observe(tool_name, latency_ms=latency_ms, success=success)
 
         return wrapped
 
@@ -148,22 +157,24 @@ class RegistryPluginBase(ToolRegistryPlugin):
         high_risk: bool = False,
     ) -> Callable[..., Awaitable[Any]]:
         async def wrapped(*args: Any, **kwargs: Any) -> Any:
+            environment = kwargs.pop("environment", None)
             start = time.perf_counter()
             success = False
             approval_token = kwargs.get("approval_token")
-            try:
-                self._enforce_operation_policy(
-                    server,
-                    tool_name,
-                    approval_token if isinstance(approval_token, str) else None,
-                    high_risk=high_risk,
-                )
-                result = await handler(*args, **kwargs)
-                success = True
-                return result
-            finally:
-                latency_ms = (time.perf_counter() - start) * 1000.0
-                server.metrics.observe(tool_name, latency_ms=latency_ms, success=success)
+            with server.runtime_manager.use(environment if isinstance(environment, str) else None):
+                try:
+                    self._enforce_operation_policy(
+                        server,
+                        tool_name,
+                        approval_token if isinstance(approval_token, str) else None,
+                        high_risk=high_risk,
+                    )
+                    result = await handler(*args, **kwargs)
+                    success = True
+                    return result
+                finally:
+                    latency_ms = (time.perf_counter() - start) * 1000.0
+                    server.metrics.observe(tool_name, latency_ms=latency_ms, success=success)
 
         return wrapped
 
@@ -171,22 +182,28 @@ class RegistryPluginBase(ToolRegistryPlugin):
 class CoreToolsPlugin(RegistryPluginBase):
     def register(self, server: Any) -> None:
         @server.mcp.tool(description=GET_NODES_DESC)
-        def get_nodes() -> Any:
-            return self._wrap_sync(server, "get_nodes", server.node_tools.get_nodes)()
+        def get_nodes(environment: EnvironmentName = None) -> Any:
+            return self._wrap_sync(server, "get_nodes", server.node_tools.get_nodes)(environment=environment)
 
         @server.mcp.tool(description=GET_NODE_STATUS_DESC)
         def get_node_status(
-            node: Annotated[str, Field(description="Name/ID of node to query (e.g. 'pve1', 'proxmox-node2')")]
+            node: Annotated[str, Field(description="Name/ID of node to query (e.g. 'pve1', 'proxmox-node2')")],
+            environment: EnvironmentName = None,
         ) -> Any:
-            return self._wrap_sync(server, "get_node_status", server.node_tools.get_node_status)(node)
+            return self._wrap_sync(server, "get_node_status", server.node_tools.get_node_status)(
+                node,
+                environment=environment,
+            )
 
         @server.mcp.tool(description=GET_STORAGE_DESC)
-        def get_storage() -> Any:
-            return self._wrap_sync(server, "get_storage", server.storage_tools.get_storage)()
+        def get_storage(environment: EnvironmentName = None) -> Any:
+            return self._wrap_sync(server, "get_storage", server.storage_tools.get_storage)(environment=environment)
 
         @server.mcp.tool(description=GET_CLUSTER_STATUS_DESC)
-        def get_cluster_status() -> Any:
-            return self._wrap_sync(server, "get_cluster_status", server.cluster_tools.get_cluster_status)()
+        def get_cluster_status(environment: EnvironmentName = None) -> Any:
+            return self._wrap_sync(server, "get_cluster_status", server.cluster_tools.get_cluster_status)(
+                environment=environment
+            )
 
 
 class JobsToolsPlugin(RegistryPluginBase):
@@ -196,39 +213,52 @@ class JobsToolsPlugin(RegistryPluginBase):
             status: Annotated[Optional[str], Field(description="Optional status filter", default=None)] = None,
             tool_name: Annotated[Optional[str], Field(description="Optional originating tool filter", default=None)] = None,
             limit: Annotated[int, Field(description="Maximum jobs to return", ge=1, le=500, default=100)] = 100,
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "list_jobs", server.jobs_tools.list_jobs)(
                 status=status,
                 tool_name=tool_name,
                 limit=limit,
+                environment=environment,
             )
 
         @server.mcp.tool(description=GET_JOB_DESC)
         def get_job(
             job_id: Annotated[str, Field(description="Stable job identifier")],
             refresh: Annotated[bool, Field(description="Poll Proxmox before returning", default=False)] = False,
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "get_job", server.jobs_tools.get_job)(
                 job_id=job_id,
                 refresh=refresh,
+                environment=environment,
             )
 
         @server.mcp.tool(description=POLL_JOB_DESC)
         def poll_job(
             job_id: Annotated[str, Field(description="Stable job identifier")],
+            environment: EnvironmentName = None,
         ) -> Any:
-            return self._wrap_sync(server, "poll_job", server.jobs_tools.poll_job)(job_id=job_id)
+            return self._wrap_sync(server, "poll_job", server.jobs_tools.poll_job)(
+                job_id=job_id,
+                environment=environment,
+            )
 
         @server.mcp.tool(description=CANCEL_JOB_DESC)
         def cancel_job(
             job_id: Annotated[str, Field(description="Stable job identifier")],
+            environment: EnvironmentName = None,
         ) -> Any:
-            return self._wrap_sync(server, "cancel_job", server.jobs_tools.cancel_job)(job_id=job_id)
+            return self._wrap_sync(server, "cancel_job", server.jobs_tools.cancel_job)(
+                job_id=job_id,
+                environment=environment,
+            )
 
         @server.mcp.tool(description=RETRY_JOB_DESC)
         def retry_job(
             job_id: Annotated[str, Field(description="Stable job identifier")],
             approval_token: Annotated[Optional[str], Field(description="Optional approval token for high-risk job retries", default=None)] = None,
+            environment: EnvironmentName = None,
         ) -> Any:
             def guarded_retry(job_id: str) -> Any:
                 self._enforce_job_retry_policy(
@@ -238,23 +268,28 @@ class JobsToolsPlugin(RegistryPluginBase):
                 )
                 return server.jobs_tools.retry_job(job_id=job_id)
 
-            return self._wrap_sync(server, "retry_job", guarded_retry)(job_id=job_id)
+            return self._wrap_sync(server, "retry_job", guarded_retry)(
+                job_id=job_id,
+                environment=environment,
+            )
 
 
 class VMToolsPlugin(RegistryPluginBase):
     def register(self, server: Any) -> None:
         @server.mcp.tool(description=GET_VMS_DESC)
-        def get_vms() -> Any:
-            return self._wrap_sync(server, "get_vms", server.vm_tools.get_vms)()
+        def get_vms(environment: EnvironmentName = None) -> Any:
+            return self._wrap_sync(server, "get_vms", server.vm_tools.get_vms)(environment=environment)
 
         @server.mcp.tool(description=GET_VM_CONFIG_DESC)
         def get_vm_config(
             node: Annotated[str, Field(description="Host node name (e.g. 'pve')")],
             vmid: Annotated[str, Field(description="VM ID number (e.g. '100')")],
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "get_vm_config", server.vm_tools.get_vm_config)(
                 node=node,
                 vmid=vmid,
+                environment=environment,
             )
 
         @server.mcp.tool(description=CREATE_VM_DESC)
@@ -268,6 +303,7 @@ class VMToolsPlugin(RegistryPluginBase):
             storage: Annotated[Optional[str], Field(description="Storage name (optional, will auto-detect)", default=None)] = None,
             ostype: Annotated[Optional[str], Field(description="OS type (optional, default: 'l26' for Linux)", default=None)] = None,
             network_bridge: Annotated[Optional[str], Field(description="Network bridge name (optional, default: 'vmbr0')", default=None)] = None,
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "create_vm", server.vm_tools.create_vm)(
                 node,
@@ -279,6 +315,7 @@ class VMToolsPlugin(RegistryPluginBase):
                 storage,
                 ostype,
                 network_bridge,
+                environment=environment,
             )
 
         @server.mcp.tool(description=CLONE_VM_DESC)
@@ -292,6 +329,7 @@ class VMToolsPlugin(RegistryPluginBase):
             storage: Annotated[Optional[str], Field(description="Target storage (optional)", default=None)] = None,
             pool: Annotated[Optional[str], Field(description="Target resource pool (optional)", default=None)] = None,
             snapname: Annotated[Optional[str], Field(description="Snapshot name to clone from (optional)", default=None)] = None,
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "clone_vm", server.vm_tools.clone_vm)(
                 node=node,
@@ -303,6 +341,7 @@ class VMToolsPlugin(RegistryPluginBase):
                 storage=storage,
                 pool=pool,
                 snapname=snapname,
+                environment=environment,
             )
 
         @server.mcp.tool(description=EXECUTE_VM_COMMAND_DESC)
@@ -311,41 +350,63 @@ class VMToolsPlugin(RegistryPluginBase):
             vmid: Annotated[str, Field(description="VM ID number (e.g. '100', '101')")],
             command: Annotated[str, Field(description="Shell command to run (e.g. 'uname -a', 'systemctl status nginx')")],
             approval_token: Annotated[Optional[str], Field(description="Optional approval token if command policy requires it", default=None)] = None,
+            environment: EnvironmentName = None,
         ) -> Any:
             return await self._wrap_async(server, "execute_vm_command", server.vm_tools.execute_command)(
                 node,
                 vmid,
                 command,
                 approval_token,
+                environment=environment,
             )
 
         @server.mcp.tool(description=START_VM_DESC)
         def start_vm(
             node: Annotated[str, Field(description="Host node name (e.g. 'pve')")],
             vmid: Annotated[str, Field(description="VM ID number (e.g. '101')")],
+            environment: EnvironmentName = None,
         ) -> Any:
-            return self._wrap_sync(server, "start_vm", server.vm_tools.start_vm)(node, vmid)
+            return self._wrap_sync(server, "start_vm", server.vm_tools.start_vm)(
+                node,
+                vmid,
+                environment=environment,
+            )
 
         @server.mcp.tool(description=STOP_VM_DESC)
         def stop_vm(
             node: Annotated[str, Field(description="Host node name (e.g. 'pve')")],
             vmid: Annotated[str, Field(description="VM ID number (e.g. '101')")],
+            environment: EnvironmentName = None,
         ) -> Any:
-            return self._wrap_sync(server, "stop_vm", server.vm_tools.stop_vm)(node, vmid)
+            return self._wrap_sync(server, "stop_vm", server.vm_tools.stop_vm)(
+                node,
+                vmid,
+                environment=environment,
+            )
 
         @server.mcp.tool(description=SHUTDOWN_VM_DESC)
         def shutdown_vm(
             node: Annotated[str, Field(description="Host node name (e.g. 'pve')")],
             vmid: Annotated[str, Field(description="VM ID number (e.g. '101')")],
+            environment: EnvironmentName = None,
         ) -> Any:
-            return self._wrap_sync(server, "shutdown_vm", server.vm_tools.shutdown_vm)(node, vmid)
+            return self._wrap_sync(server, "shutdown_vm", server.vm_tools.shutdown_vm)(
+                node,
+                vmid,
+                environment=environment,
+            )
 
         @server.mcp.tool(description=RESET_VM_DESC)
         def reset_vm(
             node: Annotated[str, Field(description="Host node name (e.g. 'pve')")],
             vmid: Annotated[str, Field(description="VM ID number (e.g. '101')")],
+            environment: EnvironmentName = None,
         ) -> Any:
-            return self._wrap_sync(server, "reset_vm", server.vm_tools.reset_vm)(node, vmid)
+            return self._wrap_sync(server, "reset_vm", server.vm_tools.reset_vm)(
+                node,
+                vmid,
+                environment=environment,
+            )
 
         @server.mcp.tool(description=DELETE_VM_DESC)
         def delete_vm(
@@ -353,12 +414,14 @@ class VMToolsPlugin(RegistryPluginBase):
             vmid: Annotated[str, Field(description="VM ID number (e.g. '998')")],
             force: Annotated[bool, Field(description="Force deletion even if VM is running", default=False)] = False,
             approval_token: Annotated[Optional[str], Field(description="Optional approval token for high-risk operations", default=None)] = None,
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "delete_vm", server.vm_tools.delete_vm, high_risk=True)(
                 node,
                 vmid,
                 force,
                 approval_token=approval_token,
+                environment=environment,
             )
 
 
@@ -371,6 +434,7 @@ class ContainerToolsPlugin(RegistryPluginBase):
             include_raw: Annotated[bool, Field(description="Include raw status/config")] = False,
             format_style: Annotated[Literal["pretty", "json"], Field(description="'pretty' or 'json'")] = "pretty",
             payload: Annotated[Optional[dict[str, Any]], Field(description="Legacy container query options")] = None,
+            environment: EnvironmentName = None,
         ) -> Any:
             if payload is not None:
                 legacy_payload = GetContainersPayload.model_validate(payload)
@@ -382,22 +446,27 @@ class ContainerToolsPlugin(RegistryPluginBase):
                     include_raw = legacy_payload.include_raw
                 if "format_style" in legacy_payload.model_fields_set:
                     format_style = legacy_payload.format_style
+                if "environment" in legacy_payload.model_fields_set:
+                    environment = legacy_payload.environment
 
             return self._wrap_sync(server, "get_containers", server.container_tools.get_containers)(
                 node=node,
                 include_stats=include_stats,
                 include_raw=include_raw,
                 format_style=format_style,
+                environment=environment,
             )
 
         @server.mcp.tool(description=START_CONTAINER_DESC)
         def start_container(
             selector: Annotated[str, Field(description="CT selector: '123' | 'pve1:123' | 'pve1/name' | 'name' | comma list")],
             format_style: Annotated[str, Field(description="'pretty' or 'json'", pattern="^(pretty|json)$")] = "pretty",
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "start_container", server.container_tools.start_container)(
                 selector=selector,
                 format_style=format_style,
+                environment=environment,
             )
 
         @server.mcp.tool(description=STOP_CONTAINER_DESC)
@@ -406,12 +475,14 @@ class ContainerToolsPlugin(RegistryPluginBase):
             graceful: Annotated[bool, Field(description="Graceful shutdown (True) or forced stop (False)", default=True)] = True,
             timeout_seconds: Annotated[int, Field(description="Timeout for stop/shutdown", ge=1, le=600)] = 10,
             format_style: Annotated[Literal["pretty", "json"], Field(description="Output format")] = "pretty",
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "stop_container", server.container_tools.stop_container)(
                 selector=selector,
                 graceful=graceful,
                 timeout_seconds=timeout_seconds,
                 format_style=format_style,
+                environment=environment,
             )
 
         @server.mcp.tool(description=RESTART_CONTAINER_DESC)
@@ -419,11 +490,13 @@ class ContainerToolsPlugin(RegistryPluginBase):
             selector: Annotated[str, Field(description="CT selector (see start_container)")],
             timeout_seconds: Annotated[int, Field(description="Timeout for reboot", ge=1, le=600)] = 10,
             format_style: Annotated[str, Field(description="'pretty' or 'json'", pattern="^(pretty|json)$")] = "pretty",
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "restart_container", server.container_tools.restart_container)(
                 selector=selector,
                 timeout_seconds=timeout_seconds,
                 format_style=format_style,
+                environment=environment,
             )
 
         @server.mcp.tool(description=UPDATE_CONTAINER_RESOURCES_DESC)
@@ -435,6 +508,7 @@ class ContainerToolsPlugin(RegistryPluginBase):
             disk_gb: Annotated[Optional[int], Field(description="Additional disk size in GiB", ge=1)] = None,
             disk: Annotated[str, Field(description="Disk to resize", default="rootfs")] = "rootfs",
             format_style: Annotated[Literal["pretty", "json"], Field(description="Output format")] = "pretty",
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "update_container_resources", server.container_tools.update_container_resources)(
                 selector=selector,
@@ -444,6 +518,7 @@ class ContainerToolsPlugin(RegistryPluginBase):
                 disk_gb=disk_gb,
                 disk=disk,
                 format_style=format_style,
+                environment=environment,
             )
 
         @server.mcp.tool(description=CREATE_CONTAINER_DESC)
@@ -464,6 +539,7 @@ class ContainerToolsPlugin(RegistryPluginBase):
             onboot: Annotated[bool, Field(description="Start container automatically when node boots", default=False)] = False,
             nesting: Annotated[bool, Field(description="Enable LXC nesting (features: nesting=1)", default=False)] = False,
             unprivileged: Annotated[bool, Field(description="Create unprivileged container", default=True)] = True,
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "create_container", server.container_tools.create_container)(
                 node=node,
@@ -482,6 +558,7 @@ class ContainerToolsPlugin(RegistryPluginBase):
                 onboot=onboot,
                 nesting=nesting,
                 unprivileged=unprivileged,
+                environment=environment,
             )
 
         @server.mcp.tool(description=DELETE_CONTAINER_DESC)
@@ -490,73 +567,76 @@ class ContainerToolsPlugin(RegistryPluginBase):
             force: Annotated[bool, Field(description="Force deletion even if running", default=False)] = False,
             format_style: Annotated[Literal["pretty", "json"], Field(description="Output format")] = "pretty",
             approval_token: Annotated[Optional[str], Field(description="Optional approval token for high-risk operations", default=None)] = None,
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "delete_container", server.container_tools.delete_container, high_risk=True)(
                 selector=selector,
                 force=force,
                 format_style=format_style,
                 approval_token=approval_token,
+                environment=environment,
+            )
+        server.logger.info("Container command tools will resolve SSH settings per selected environment")
+
+        @server.mcp.tool(description=EXECUTE_CONTAINER_COMMAND_DESC)
+        def execute_container_command(
+            selector: Annotated[str, Field(description="Container selector: '123', 'pve1:123', 'pve1/name', or 'name'")],
+            command: Annotated[str, Field(description="Shell command to run (e.g. 'uname -a', 'df -h')")],
+            approval_token: Annotated[Optional[str], Field(description="Optional approval token if command policy requires it", default=None)] = None,
+            environment: EnvironmentName = None,
+        ) -> Any:
+            return self._wrap_sync(server, "execute_container_command", server.container_tools.execute_command)(
+                selector=selector,
+                command=command,
+                approval_token=approval_token,
+                environment=environment,
             )
 
-        if server.config.ssh is not None:
-            server.logger.info(
-                "Container command execution enabled (SSH configured for user '%s')",
-                server.config.ssh.user,
+        @server.mcp.tool(description=UPDATE_CONTAINER_SSH_KEYS_DESC)
+        def update_container_ssh_keys(
+            node: Annotated[str, Field(description="Proxmox node name (e.g. 'pve')")],
+            vmid: Annotated[str, Field(description="Container ID (e.g. '101')")],
+            public_keys: Annotated[str, Field(description="Newline-separated SSH public key(s) to authorize")],
+            mode: Annotated[str, Field(description="'append' (default) or 'replace'", pattern="^(append|replace)$", default="append")] = "append",
+            approval_token: Annotated[Optional[str], Field(description="Optional approval token for high-risk operations", default=None)] = None,
+            environment: EnvironmentName = None,
+        ) -> Any:
+            return self._wrap_sync(
+                server,
+                "update_container_ssh_keys",
+                server.container_tools.update_container_ssh_keys,
+                high_risk=True,
+            )(
+                node=node,
+                vmid=vmid,
+                public_keys=public_keys,
+                mode=mode,
+                approval_token=approval_token,
+                environment=environment,
             )
-
-            @server.mcp.tool(description=EXECUTE_CONTAINER_COMMAND_DESC)
-            def execute_container_command(
-                selector: Annotated[str, Field(description="Container selector: '123', 'pve1:123', 'pve1/name', or 'name'")],
-                command: Annotated[str, Field(description="Shell command to run (e.g. 'uname -a', 'df -h')")],
-                approval_token: Annotated[Optional[str], Field(description="Optional approval token if command policy requires it", default=None)] = None,
-            ) -> Any:
-                return self._wrap_sync(server, "execute_container_command", server.container_tools.execute_command)(
-                    selector=selector,
-                    command=command,
-                    approval_token=approval_token,
-                )
-
-            @server.mcp.tool(description=UPDATE_CONTAINER_SSH_KEYS_DESC)
-            def update_container_ssh_keys(
-                node: Annotated[str, Field(description="Proxmox node name (e.g. 'pve')")],
-                vmid: Annotated[str, Field(description="Container ID (e.g. '101')")],
-                public_keys: Annotated[str, Field(description="Newline-separated SSH public key(s) to authorize")],
-                mode: Annotated[str, Field(description="'append' (default) or 'replace'", pattern="^(append|replace)$", default="append")] = "append",
-                approval_token: Annotated[Optional[str], Field(description="Optional approval token for high-risk operations", default=None)] = None,
-            ) -> Any:
-                return self._wrap_sync(
-                    server,
-                    "update_container_ssh_keys",
-                    server.container_tools.update_container_ssh_keys,
-                    high_risk=True,
-                )(
-                    node=node,
-                    vmid=vmid,
-                    public_keys=public_keys,
-                    mode=mode,
-                    approval_token=approval_token,
-                )
-        else:
-            server.logger.info("Container command execution disabled (no [ssh] section in config)")
 
         @server.mcp.tool(description=GET_CONTAINER_CONFIG_DESC)
         def get_container_config(
             node: Annotated[str, Field(description="Proxmox node name (e.g. 'pve')")],
             vmid: Annotated[str, Field(description="Container ID (e.g. '101')")],
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "get_container_config", server.container_tools.get_container_config)(
                 node=node,
                 vmid=vmid,
+                environment=environment,
             )
 
         @server.mcp.tool(description=GET_CONTAINER_IP_DESC)
         def get_container_ip(
             node: Annotated[str, Field(description="Proxmox node name (e.g. 'pve')")],
             vmid: Annotated[str, Field(description="Container ID (e.g. '101')")],
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "get_container_ip", server.container_tools.get_container_ip)(
                 node=node,
                 vmid=vmid,
+                environment=environment,
             )
 
 
@@ -567,11 +647,13 @@ class SnapshotToolsPlugin(RegistryPluginBase):
             node: Annotated[str, Field(description="Host node name (e.g. 'pve')")],
             vmid: Annotated[str, Field(description="VM or container ID (e.g. '100')")],
             vm_type: Annotated[str, Field(description="Type: 'qemu' for VMs, 'lxc' for containers", default="qemu")] = "qemu",
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "list_snapshots", server.snapshot_tools.list_snapshots)(
                 node=node,
                 vmid=vmid,
                 vm_type=vm_type,
+                environment=environment,
             )
 
         @server.mcp.tool(description=CREATE_SNAPSHOT_DESC)
@@ -582,6 +664,7 @@ class SnapshotToolsPlugin(RegistryPluginBase):
             description: Annotated[Optional[str], Field(description="Optional description", default=None)] = None,
             vmstate: Annotated[bool, Field(description="Include memory state (VMs only)", default=False)] = False,
             vm_type: Annotated[str, Field(description="Type: 'qemu' or 'lxc'", default="qemu")] = "qemu",
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "create_snapshot", server.snapshot_tools.create_snapshot)(
                 node=node,
@@ -590,6 +673,7 @@ class SnapshotToolsPlugin(RegistryPluginBase):
                 description=description,
                 vmstate=vmstate,
                 vm_type=vm_type,
+                environment=environment,
             )
 
         @server.mcp.tool(description=DELETE_SNAPSHOT_DESC)
@@ -599,6 +683,7 @@ class SnapshotToolsPlugin(RegistryPluginBase):
             snapname: Annotated[str, Field(description="Snapshot name to delete")],
             vm_type: Annotated[str, Field(description="Type: 'qemu' or 'lxc'", default="qemu")] = "qemu",
             approval_token: Annotated[Optional[str], Field(description="Optional approval token for high-risk operations", default=None)] = None,
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "delete_snapshot", server.snapshot_tools.delete_snapshot, high_risk=True)(
                 node=node,
@@ -606,6 +691,7 @@ class SnapshotToolsPlugin(RegistryPluginBase):
                 snapname=snapname,
                 vm_type=vm_type,
                 approval_token=approval_token,
+                environment=environment,
             )
 
         @server.mcp.tool(description=ROLLBACK_SNAPSHOT_DESC)
@@ -615,6 +701,7 @@ class SnapshotToolsPlugin(RegistryPluginBase):
             snapname: Annotated[str, Field(description="Snapshot name to restore")],
             vm_type: Annotated[str, Field(description="Type: 'qemu' or 'lxc'", default="qemu")] = "qemu",
             approval_token: Annotated[Optional[str], Field(description="Optional approval token for high-risk operations", default=None)] = None,
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "rollback_snapshot", server.snapshot_tools.rollback_snapshot, high_risk=True)(
                 node=node,
@@ -622,6 +709,7 @@ class SnapshotToolsPlugin(RegistryPluginBase):
                 snapname=snapname,
                 vm_type=vm_type,
                 approval_token=approval_token,
+                environment=environment,
             )
 
 
@@ -631,15 +719,25 @@ class ImageToolsPlugin(RegistryPluginBase):
         def list_isos(
             node: Annotated[Optional[str], Field(description="Filter by node (optional)", default=None)] = None,
             storage: Annotated[Optional[str], Field(description="Filter by storage pool (optional)", default=None)] = None,
+            environment: EnvironmentName = None,
         ) -> Any:
-            return self._wrap_sync(server, "list_isos", server.iso_tools.list_isos)(node=node, storage=storage)
+            return self._wrap_sync(server, "list_isos", server.iso_tools.list_isos)(
+                node=node,
+                storage=storage,
+                environment=environment,
+            )
 
         @server.mcp.tool(description=LIST_TEMPLATES_DESC)
         def list_templates(
             node: Annotated[Optional[str], Field(description="Filter by node (optional)", default=None)] = None,
             storage: Annotated[Optional[str], Field(description="Filter by storage pool (optional)", default=None)] = None,
+            environment: EnvironmentName = None,
         ) -> Any:
-            return self._wrap_sync(server, "list_templates", server.iso_tools.list_templates)(node=node, storage=storage)
+            return self._wrap_sync(server, "list_templates", server.iso_tools.list_templates)(
+                node=node,
+                storage=storage,
+                environment=environment,
+            )
 
         @server.mcp.tool(description=DOWNLOAD_ISO_DESC)
         def download_iso(
@@ -649,6 +747,7 @@ class ImageToolsPlugin(RegistryPluginBase):
             filename: Annotated[str, Field(description="Target filename (e.g. 'ubuntu-22.04.iso')")],
             checksum: Annotated[Optional[str], Field(description="Optional checksum", default=None)] = None,
             checksum_algorithm: Annotated[str, Field(description="Algorithm: sha256, sha512, md5", default="sha256")] = "sha256",
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "download_iso", server.iso_tools.download_iso)(
                 node=node,
@@ -657,6 +756,7 @@ class ImageToolsPlugin(RegistryPluginBase):
                 filename=filename,
                 checksum=checksum,
                 checksum_algorithm=checksum_algorithm,
+                environment=environment,
             )
 
         @server.mcp.tool(description=DELETE_ISO_DESC)
@@ -665,12 +765,14 @@ class ImageToolsPlugin(RegistryPluginBase):
             storage: Annotated[str, Field(description="Storage pool name")],
             filename: Annotated[str, Field(description="ISO/template filename to delete")],
             approval_token: Annotated[Optional[str], Field(description="Optional approval token for high-risk operations", default=None)] = None,
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "delete_iso", server.iso_tools.delete_iso, high_risk=True)(
                 node=node,
                 storage=storage,
                 filename=filename,
                 approval_token=approval_token,
+                environment=environment,
             )
 
 
@@ -681,11 +783,13 @@ class BackupToolsPlugin(RegistryPluginBase):
             node: Annotated[Optional[str], Field(description="Filter by node (optional)", default=None)] = None,
             storage: Annotated[Optional[str], Field(description="Filter by storage pool (optional)", default=None)] = None,
             vmid: Annotated[Optional[str], Field(description="Filter by VM/container ID (optional)", default=None)] = None,
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "list_backups", server.backup_tools.list_backups)(
                 node=node,
                 storage=storage,
                 vmid=vmid,
+                environment=environment,
             )
 
         @server.mcp.tool(description=CREATE_BACKUP_DESC)
@@ -696,6 +800,7 @@ class BackupToolsPlugin(RegistryPluginBase):
             compress: Annotated[str, Field(description="Compression: 0, gzip, lz4, zstd", default="zstd")] = "zstd",
             mode: Annotated[str, Field(description="Mode: snapshot, suspend, stop", default="snapshot")] = "snapshot",
             notes: Annotated[Optional[str], Field(description="Optional notes", default=None)] = None,
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "create_backup", server.backup_tools.create_backup)(
                 node=node,
@@ -704,6 +809,7 @@ class BackupToolsPlugin(RegistryPluginBase):
                 compress=compress,
                 mode=mode,
                 notes=notes,
+                environment=environment,
             )
 
         @server.mcp.tool(description=RESTORE_BACKUP_DESC)
@@ -714,6 +820,7 @@ class BackupToolsPlugin(RegistryPluginBase):
             storage: Annotated[Optional[str], Field(description="Target storage (optional)", default=None)] = None,
             unique: Annotated[bool, Field(description="Generate unique MAC addresses", default=True)] = True,
             approval_token: Annotated[Optional[str], Field(description="Optional approval token for high-risk operations", default=None)] = None,
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "restore_backup", server.backup_tools.restore_backup, high_risk=True)(
                 node=node,
@@ -722,6 +829,7 @@ class BackupToolsPlugin(RegistryPluginBase):
                 storage=storage,
                 unique=unique,
                 approval_token=approval_token,
+                environment=environment,
             )
 
         @server.mcp.tool(description=DELETE_BACKUP_DESC)
@@ -730,10 +838,12 @@ class BackupToolsPlugin(RegistryPluginBase):
             storage: Annotated[str, Field(description="Storage pool name")],
             volid: Annotated[str, Field(description="Backup volume ID to delete")],
             approval_token: Annotated[Optional[str], Field(description="Optional approval token for high-risk operations", default=None)] = None,
+            environment: EnvironmentName = None,
         ) -> Any:
             return self._wrap_sync(server, "delete_backup", server.backup_tools.delete_backup, high_risk=True)(
                 node=node,
                 storage=storage,
                 volid=volid,
                 approval_token=approval_token,
+                environment=environment,
             )

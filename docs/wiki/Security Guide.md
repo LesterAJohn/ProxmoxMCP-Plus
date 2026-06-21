@@ -63,10 +63,11 @@ Implications:
 
 `execute_container_command` and `update_container_ssh_keys` are optional.
 
-These tools only register when the config includes an `ssh` section. Without it:
+These tools resolve SSH settings from the selected runtime environment. Without
+an `ssh` section for that environment:
 
 - no SSH connection is attempted
-- the tools do not appear at all
+- the command fails before container execution
 
 The implementation SSHes to the Proxmox node and runs `pct exec`. Because this path is more powerful than pure API reads, treat it as a separate security decision. `update_container_ssh_keys` is classified as a high-risk operation and follows `command_policy.high_risk_*` approval settings.
 

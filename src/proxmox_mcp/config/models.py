@@ -133,6 +133,22 @@ class JobsConfig(BaseModel):
 
     sqlite_path: str = "proxmox-jobs.sqlite3"
 
+
+class EnvironmentConfig(BaseModel):
+    """Per-request Proxmox environment settings.
+
+    Each environment has its own Proxmox API credentials, optional SSH
+    settings, and optional job-store location. When omitted, the root jobs
+    config is reused with an environment-specific suffix for multi-environment
+    deployments.
+    """
+
+    proxmox: ProxmoxConfig
+    api_tunnel: Optional[APITunnelConfig] = None
+    auth: AuthConfig
+    ssh: Optional[SSHConfig] = None
+    jobs: Optional[JobsConfig] = None
+
 class MCPConfig(BaseModel):
     """Model for MCP server configuration.
 
@@ -173,3 +189,6 @@ class Config(BaseModel):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     command_policy: CommandPolicyConfig = Field(default_factory=CommandPolicyConfig)
     jobs: JobsConfig = Field(default_factory=JobsConfig)
+    default_environment: str = "default"
+    runtime_config_reload: bool = True
+    environments: Dict[str, EnvironmentConfig] = Field(default_factory=dict)

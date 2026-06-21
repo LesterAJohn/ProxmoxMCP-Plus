@@ -72,6 +72,42 @@ def _apply_mcp_env_overrides(config_data: Dict[str, Any]) -> None:
     mcp_config.update(overrides)
 
 
+def _normalize_environments(config_data: Dict[str, Any]) -> None:
+    """Normalize legacy and multi-environment configs into one shape."""
+    default_environment = str(config_data.get("default_environment") or "default").strip() or "default"
+    config_data["default_environment"] = default_environment
+
+    environments = config_data.get("environments")
+    if environments is None:
+        environments = {}
+        config_data["environments"] = environments
+    if not isinstance(environments, dict):
+        raise ValueError("environments config must be a JSON object")
+
+    has_root_environment = bool(config_data.get("proxmox")) and bool(config_data.get("auth"))
+    if has_root_environment and default_environment not in environments:
+        environment_data: Dict[str, Any] = {
+            "proxmox": config_data["proxmox"],
+            "auth": config_data["auth"],
+        }
+        for key in ("api_tunnel", "ssh", "jobs"):
+            if key in config_data:
+                environment_data[key] = config_data[key]
+        environments[default_environment] = environment_data
+
+    if environments and not has_root_environment:
+        default_config = environments.get(default_environment)
+        if not isinstance(default_config, dict):
+            available = ", ".join(sorted(str(key) for key in environments))
+            raise ValueError(
+                f"default_environment '{default_environment}' is not defined. "
+                f"Available environments: {available}"
+            )
+        for key in ("proxmox", "auth", "api_tunnel", "ssh", "jobs"):
+            if key in default_config and key not in config_data:
+                config_data[key] = default_config[key]
+
+
 def load_config(config_path: Optional[str] = None) -> Config:
     """Load and validate configuration from JSON file.
 
@@ -190,6 +226,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
             raise ValueError(f"Failed to load config: {e}")
 
     _apply_mcp_env_overrides(config_data)
+    _normalize_environments(config_data)
 
     # Final validation check
     if not config_data.get('proxmox', {}).get('host'):

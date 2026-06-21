@@ -122,7 +122,7 @@ After connecting a client, verify:
 - `PROXMOX_MCP_CONFIG` points to the wrong file
 - OpenAPI proxy runs, but authenticated `/health` stays degraded because the MCP subprocess did not start
 - TLS verification disabled in config while `dev_mode` is false
-- assuming `execute_container_command` should exist without an `ssh` section
+- calling `execute_container_command` against an environment that has no `ssh` section
 
 ## Related Pages
 
